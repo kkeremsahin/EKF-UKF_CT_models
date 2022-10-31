@@ -1,81 +1,60 @@
-% clearvars; close all;
-% This is the coordinated turn model extended kalman filter for 2D tracking problem
-% with states of the form x = [x1,x2,x1',x2',w]^T and the measurements of the
-% form y = [x1,x2]^T
+clearvars; close all;
 
-% The constant velocity model is implemented;
-% x(k+1) = f(x(k)) + G(x(k))(v(k))
-% y(k) = C x(k) + w(k)
-% v(k)~ N(0,Q)
-% w(k)~ N(0,R)
-% f(x(k)) = [ x1 + (v1/w)*sin(w*T) - (v2/w)*(1-cos(w*T))
-%             x2 + (v1/w)*(1-cos(w*T)) - (v2/w)*sin(w*T)
-%                      v1*cos(w*T) - v2*sin(w*T)
-%                      v1*sin(w*T) + v2*cos(w*T)      
-%                                    w                  ] 
-
-T = 1; % Sampling Time (s)
+load ('ex_ground_truth.mat')
+seed = 1000;
+rng(seed);
+T = 1; % Sampling Time (s) 
+ground_truth_state = [position_gt;velocity_gt;omega_gt];
+ground_truth_state = ground_truth_state(:,1:(fs*T):end);  %downsample the generated path
+N_samples = size(ground_truth_state,2);
 sigma_state_filter = 10;
 sigma_meas_filter = 10;
+
 %% State Matrix Definitions
 % A is the jacobian of the state transition function f(x(k))
 % B is chosen from two alternatives as G_p1
 
-    
-C = [ 1 0 0 0 0
-      0 1 0 0 0];
+C = [eye(2),zeros(2,3)];
+
 Q = [sigma_state_filter^2     0
-            0                 0.1];
+            0                 0.01];
 R = sigma_meas_filter^2  * eye(2);
 
+%% Measurement generation
+measurement = C* ground_truth_state + mvnrnd(zeros(size(C,1),1),R,N_samples).';
 
-sample_count = 400;
-
-%% Linear Kalman Filter
+%% Extended Kalman Filter
 % Initial State definitions and space allocation for states
-x = zeros(5,size(path_org,2));
-x_0 = [0 ; 0; 10; 10; 1e-3];
-x(:,1) = x_0;
-P_k = 40 * eye(5);
-
-for k = 1: sample_count-1
-    x_k = x(:,k);
-    theta = atan2(x_k(4),x_k(3));
+x = zeros(5,N_samples-1);
+x_kp1_hat = [0 ; 0; 27; 0; 1e-4];
+x(:,1) = x_kp1_hat;
+P_k_hat = diag([100*ones(1,4),1e-5]);
+for k = 1:N_samples-1 
+    % Measurement update
+    S = C*P_k_hat*C'+R;
     
-    B = [   0           0  
-            0           0
-         T*cos(theta)   0    
-         T*sin(theta)   0
-            0           T];
+    Kk = P_k_hat* C.'/S;
 
+    P_k = P_k_hat- Kk*S*Kk.';
+    
+    x(:,k)= x_kp1_hat + Kk*(measurement(:,k)-C*x_kp1_hat);
+  
     % Time_update
+    theta = atan2(x(4,k),x(3,k));
+    B = [   0               0
+            0               0
+            T*cos(theta)    0
+            T*sin(theta)    0
+            0               T];
     
-    [x_kp1_hat, A] = jacob_cartesian(x_k,T);
+    [x_kp1_hat, A] = jacob_cartesian(x(:,k),T);
     
     P_k_hat = A*P_k* A.' + B* Q* B.';
-    
-    % Measurement update
-    S=C*P_k_hat*C'+R;
-    
-    Pk=P_k_hat-P_k_hat*C'/S*C*P_k_hat;
-    
-    x(:,k+1)=x_kp1_hat + Pk*C'/S*(measurement(:,k)-C*x_kp1_hat);
-    
 end
 
 %% Plot the Results
 figure
-plot (path_org(1,:),path_org(2,:),'Linewidth',2)
+plot (ground_truth_state(1,:),ground_truth_state(2,:),'Linewidth',2)
 hold on
 plot(x(1,:),x(2,:),'Linewidth',2)
-scatter(measurement(1,:),measurement(2,:))
-%% Find Errors
-Error = path_org - [x(1,:);x(2,:)];
-rmse = sqrt(Error(1,:).^2 + Error(2,:).^2);
-figure
-plot(rmse);
-
-
-
-
-    
+plot(measurement(1,:),measurement(2,:),'o')
